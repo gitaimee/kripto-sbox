@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from PIL import Image
 import time
 import os
@@ -210,6 +211,41 @@ def aes_decrypt_block_fast(block, rk, inv_sbox):
                 s[4*c : 4*c+4] = inv_mix_columns_col(s[4*c : 4*c+4])
     return s
 
+# ------------------ FUNGSI UJI STATISTIK & HISTOGRAM ------------------
+def kanal(img):
+    return [("Gray", img)] if img.ndim == 2 else [(k, img[..., i]) for i, k in enumerate("RGB")]
+
+def entropy(a):
+    p = np.bincount(a.reshape(-1), minlength=256) / a.size
+    p = p[p > 0]
+    return float(-(p * np.log2(p)).sum())
+
+def chi_square(a):
+    h = np.bincount(a.reshape(-1), minlength=256)
+    e = a.size / 256
+    return float(((h - e) ** 2 / e).sum())
+
+def plot_histogram(im, is_cipher=False):
+    warna = {"R": "#ef4444", "G": "#22c55e", "B": "#3b82f6"}
+    fig, ax = plt.subplots(figsize=(5.5, 3.2))
+    for kn, a in kanal(im):
+        h = np.bincount(a.ravel(), minlength=256)
+        if im.ndim == 2:
+            ax.bar(range(256), h, width=1.0, color="#3b82f6" if is_cipher else "#64748b")
+        else:
+            ax.plot(range(256), h, color=warna[kn], lw=1.1, label=kn)
+    if im.ndim == 3:
+        ax.legend(loc="upper right", frameon=True, fontsize=8)
+    ax.set_xlim(0, 255)
+    ax.set_xlabel("Nilai Piksel (0-255)", fontsize=8.5)
+    ax.set_ylabel("Frekuensi", fontsize=8.5)
+    ax.tick_params(labelsize=8)
+    ax.grid(True, linestyle="--", alpha=0.25)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
 def render_terminal(logs, title_dim):
     body_html = "\n".join(logs)
     return f"""
@@ -235,7 +271,7 @@ st.markdown("""
 <div class="hero-box">
     <div class="hero-badge">AES-128 CBC | S-Box Hasil Optimasi</div>
     <div class="hero-title">Enkripsi dan Dekripsi Citra Digital</div>
-    <p class="hero-subtitle">Uji coba enkripsi block-cipher mode CBC menggunakan S-Box 8-bit kustom pada citra grayscale maupun berwarna (RGB), lengkap dengan log proses dekripsi dan perbandingan matriks piksel.</p>
+    <p class="hero-subtitle">Simulasi AES-128 mode CBC menggunakan S-Box 8-bit kustom beserta uji entropi, chi-square, dan histogram.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -245,23 +281,21 @@ ctrl_col1, ctrl_col2 = st.columns([2.2, 1])
 with ctrl_col1:
     uploaded = st.file_uploader(
         "Pilih Gambar (PNG, JPG, JPEG, TIF, TIFF)",
-        type=["png", "jpg", "jpeg", "tif", "tiff"],
-        help="Mode warna gambar (Grayscale 1-kanal atau RGB 3-kanal) dideteksi otomatis dan dinormalisasi ke ukuran 128x128."
+        type=["png", "jpg", "jpeg", "tif", "tiff"]
     )
 
 with ctrl_col2:
     key_hex_input = st.text_input(
         "Kunci Enkripsi (16-Byte Hex)",
         value="01010101010101010101010101010101",
-        max_chars=32,
-        help="Masukkan 32 karakter heksadesimal untuk kunci 128-bit."
+        max_chars=32
     )
 
 clean_hex = "".join(c for c in key_hex_input if c in "0123456789abcdefABCDEF").ljust(32, "0")[:32]
 key = [int(clean_hex[i:i+2], 16) for i in range(0, 32, 2)]
 
 if uploaded is None:
-    st.info("Unggah gambar terlebih dahulu untuk menjalankan proses enkripsi, dekripsi, dan melihat perbandingan matriks pikselnya.")
+    st.info("Unggah gambar untuk memulai proses enkripsi, dekripsi, dan pengujian statistik.")
 else:
     raw_img = Image.open(uploaded)
     is_grayscale = raw_img.mode in ("L", "1", "I", "F")
@@ -281,7 +315,7 @@ else:
     total_blocks = total_bytes // 16
 
     # Kotak Terminal Proses
-    st.subheader("Log Proses Enkripsi & Dekripsi")
+    st.subheader("Log Proses")
     terminal_slot = st.empty()
     logs = []
 
@@ -291,14 +325,14 @@ else:
         terminal_slot.markdown(render_terminal(logs, short_dim), unsafe_allow_html=True)
 
     push_log("log-tag-info", "INIT", f"Sumber S-Box: <span class='log-dim'>{html.escape(sbox_source)}</span>")
-    push_log("log-tag-info", "CITRA", f"Format terdeteksi: <b>{mode_label}</b> ({total_bytes:,} byte / {total_blocks:,} blok).")
-    push_log("log-tag-info", "KUNCI", f"Key schedule AES-128 siap (11 round key) | Hex: <span class='log-hex'>{clean_hex.upper()}</span>")
+    push_log("log-tag-info", "CITRA", f"Format: <b>{mode_label}</b> ({total_bytes:,} byte / {total_blocks:,} blok).")
+    push_log("log-tag-info", "KUNCI", f"Key schedule AES-128 siap | Hex: <span class='log-hex'>{clean_hex.upper()}</span>")
 
     rk = key_expansion(key, SBOX_ML)
-    time.sleep(0.08)
+    time.sleep(0.06)
 
     # Proses Enkripsi
-    push_log("log-tag-enc", "ENKRIPSI", "Menjalankan AES-128 mode CBC (SubBytes -> ShiftRows -> MixColumns -> AddRoundKey)...")
+    push_log("log-tag-enc", "ENKRIPSI", "Menjalankan AES-128 CBC (SubBytes -> ShiftRows -> MixColumns -> AddRoundKey)...")
     t_enc_start = time.perf_counter()
     cipher = np.zeros_like(flat)
     prev = [0] * 16
@@ -312,14 +346,13 @@ else:
         prev = enc
     t_enc_ms = (time.perf_counter() - t_enc_start) * 1000
 
-    push_log("log-tag-enc", "ENKRIPSI", f"Sampel Blok #0 Asli      : <span class='log-hex'>{fmt_hex_preview(flat)} ...</span>")
-    push_log("log-tag-enc", "ENKRIPSI", f"Sampel Blok #0 Terenkripsi: <span class='log-hex'>{fmt_hex_preview(cipher)} ...</span>")
-    push_log("log-tag-enc", "SELESAI ", f"Enkripsi {total_blocks:,} blok rampung dalam <b>{t_enc_ms:.1f} ms</b>.")
-    time.sleep(0.08)
+    push_log("log-tag-enc", "ENKRIPSI", f"Blok #0 Asli      : <span class='log-hex'>{fmt_hex_preview(flat)} ...</span>")
+    push_log("log-tag-enc", "ENKRIPSI", f"Blok #0 Terenkripsi: <span class='log-hex'>{fmt_hex_preview(cipher)} ...</span>")
+    push_log("log-tag-enc", "SELESAI ", f"Enkripsi {total_blocks:,} blok selesai dalam <b>{t_enc_ms:.1f} ms</b>.")
+    time.sleep(0.06)
 
     # Proses Dekripsi
-    push_log("log-tag-dec", "DEKRIPSI", "Menyusun tabel Invers S-Box (INV_SBOX_ML) untuk mengembalikan nilai piksel...")
-    push_log("log-tag-dec", "DEKRIPSI", "Menjalankan dekripsi AES-128 CBC (InvShiftRows -> InvSubBytes -> AddRoundKey -> InvMixColumns)...")
+    push_log("log-tag-dec", "DEKRIPSI", "Menjalankan dekripsi AES-128 CBC menggunakan INV_SBOX_ML...")
     t_dec_start = time.perf_counter()
     decrypted = np.zeros_like(cipher)
     prev = [0] * 16
@@ -335,8 +368,8 @@ else:
     decrypted_img = decrypted.reshape(pixels.shape)
     byte_diff = int(np.sum(pixels != decrypted_img))
 
-    push_log("log-tag-dec", "DEKRIPSI", f"Sampel Blok #0 Dekripsi   : <span class='log-hex'>{fmt_hex_preview(decrypted)} ...</span>")
-    push_log("log-tag-dec", "SELESAI ", f"Dekripsi {total_blocks:,} blok rampung dalam <b>{t_dec_ms:.1f} ms</b> | Selisih byte: <b>{byte_diff}</b>.")
+    push_log("log-tag-dec", "DEKRIPSI", f"Blok #0 Dekripsi   : <span class='log-hex'>{fmt_hex_preview(decrypted)} ...</span>")
+    push_log("log-tag-dec", "SELESAI ", f"Dekripsi {total_blocks:,} blok selesai dalam <b>{t_dec_ms:.1f} ms</b> | Selisih: <b>{byte_diff}</b>.")
 
     # Ringkasan Metrik
     m1, m2, m3, m4 = st.columns(4)
@@ -367,6 +400,37 @@ else:
             st.markdown("**3. Citra Hasil Dekripsi**")
             st.image(decrypted_img, use_container_width=True)
 
+    # Uji Entropi, Chi-Square & Histogram
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("Uji Statistik & Histogram")
+
+    stat_rows = []
+    for (k, a), (_, c) in zip(kanal(pixels), kanal(cipher_img)):
+        chi_c = chi_square(c)
+        stat_rows.append({
+            "Kanal": k,
+            "Entropi Asli": f"{entropy(a):.5f}",
+            "Entropi Cipher": f"{entropy(c):.5f}",
+            "Chi-Square Asli": f"{chi_square(a):.2f}",
+            "Chi-Square Cipher": f"{chi_c:.2f}",
+            "Seragam (Chi-Square < 293,25)": "Ya" if chi_c < 293.25 else "Tidak",
+        })
+    st.dataframe(pd.DataFrame(stat_rows), hide_index=True, use_container_width=True)
+
+    h_col1, h_col2 = st.columns(2)
+    with h_col1:
+        with st.container(border=True):
+            st.markdown("**Histogram Citra Asli**")
+            fig_asli = plot_histogram(pixels, is_cipher=False)
+            st.pyplot(fig_asli, use_container_width=True)
+            plt.close(fig_asli)
+    with h_col2:
+        with st.container(border=True):
+            st.markdown("**Histogram Citra Terenkripsi**")
+            fig_cipher = plot_histogram(cipher_img, is_cipher=True)
+            st.pyplot(fig_cipher, use_container_width=True)
+            plt.close(fig_cipher)
+
     # Tabel Matriks Piksel
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("Matriks Nilai Piksel (0-255)")
@@ -376,7 +440,7 @@ else:
         with opt_col1:
             view_mode = st.radio(
                 "Ukuran Matriks:",
-                ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
+                ["Cuplikan 8x8 Piksel Pertama", "Matriks Penuh (128x128)"],
                 horizontal=True
             )
         with opt_col2:
@@ -397,7 +461,7 @@ else:
         with opt_col2:
             view_mode = st.radio(
                 "Ukuran Matriks:",
-                ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
+                ["Cuplikan 8x8 Piksel Pertama", "Matriks Penuh (128x128)"],
                 horizontal=True
             )
         with opt_col3:
