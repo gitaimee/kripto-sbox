@@ -301,7 +301,6 @@ def fmt_hex_preview(arr, n=8):
 # ------------------ TAMPILAN UTAMA ------------------
 st.markdown("""
 <div class="hero-box">
-    <div class="hero-badge">AES-128 CBC | S-Box Hasil Optimasi</div>
     <div class="hero-title">Enkripsi dan Dekripsi Citra Digital</div>
     <p class="hero-subtitle">Simulasi AES-128 mode CBC menggunakan S-Box 8-bit kustom beserta uji statistik, diferensial (NPCR/UACI), dan sensitivitas kunci.</p>
 </div>
@@ -318,8 +317,8 @@ with ctrl_col1:
 
 with ctrl_col2:
     key_hex_input = st.text_input(
-        "Kunci Enkripsi (16-Byte Hex)",
-        value="01010101010101010101010101010101",
+        "Kunci Enkripsi",
+        value="2b28ab097eaef7cf15d2154f16a6883c",
         max_chars=32
     )
 
