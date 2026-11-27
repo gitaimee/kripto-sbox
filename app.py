@@ -244,8 +244,8 @@ ctrl_col1, ctrl_col2 = st.columns([2.2, 1])
 
 with ctrl_col1:
     uploaded = st.file_uploader(
-        "Pilih Gambar (PNG, JPG, JPEG)",
-        type=["png", "jpg", "jpeg"],
+        "Pilih Gambar (PNG, JPG, JPEG, TIF, TIFF)",
+        type=["png", "jpg", "jpeg", "tif", "tiff"],
         help="Gambar otomatis diubah menjadi grayscale 8-bit ukuran 128x128 piksel agar sesuai dengan pemrosesan blok 128-bit."
     )
 
