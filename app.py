@@ -454,7 +454,7 @@ with ctrl_col1:
 with ctrl_col2:
     resize_opt = st.selectbox(
         "Resolusi Pemrosesan",
-        ["Ukuran Asli (Sesuai Colab)", "256 x 256", "128 x 128"],
+        ["Ukuran Asli", "256 x 256", "128 x 128"],
         index=0
     )
 
@@ -469,7 +469,7 @@ clean_hex = "".join(c for c in key_hex_input if c in "0123456789abcdefABCDEF").l
 key = tuple(int(clean_hex[i:i+2], 16) for i in range(0, 32, 2))
 
 if uploaded is None:
-    st.info("Unggah gambar (misalnya mandrill_rgb.png / mandrill_gray.png) untuk memulai proses enkripsi, dekripsi, dan pengujian.")
+    st.info("Unggah gambar untuk memulai proses enkripsi, dekripsi, dan pengujian.")
 else:
     raw_img = Image.open(uploaded)
     is_grayscale = raw_img.mode in ("L", "1", "I", "F")
