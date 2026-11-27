@@ -263,7 +263,7 @@ key = [int(clean_hex[i:i+2], 16) for i in range(0, 32, 2)]
 if uploaded is None:
     st.info("Unggah gambar terlebih dahulu untuk menjalankan proses enkripsi, dekripsi, dan melihat perbandingan matriks pikselnya.")
 else:
-    img = Image.open(uploaded).convert("L").resize((128, 128))
+    img = Image.open(uploaded).convert("RGB").resize((128, 128))
     pixels = np.array(img, dtype=np.uint8)
     flat = pixels.flatten()
     total_blocks = len(flat) // 16
@@ -359,32 +359,31 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("Matriks Nilai Piksel (0-255)")
 
-    opt_col1, opt_col2 = st.columns(2)
-    with opt_col1:
-        view_mode = st.radio(
-            "Ukuran Matriks:",
-            ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
-            horizontal=True
-        )
-    with opt_col2:
-        fmt_mode = st.radio(
-            "Format Angka:",
-            ["Desimal (0-255)", "Heksadesimal (00-FF)"],
-            horizontal=True
-        )
+    opt_col1, opt_col2, opt_col3 = st.columns(3)
+with opt_col1:
+    channel_mode = st.radio("Kanal Warna:", ["Red (R)", "Green (G)", "Blue (B)"], horizontal=True)
+with opt_col2:
+    view_mode = st.radio(
+        "Ukuran Matriks:",
+        ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
+        horizontal=True
+    )
+with opt_col3:
+    fmt_mode = st.radio("Format Angka:", ["Desimal (0-255)", "Heksadesimal (00-FF)"], horizontal=True)
 
-    slice_n = 8 if "8x8" in view_mode else 128
+ch_idx = {"Red (R)": 0, "Green (G)": 1, "Blue (B)": 2}[channel_mode]
+slice_n = 8 if "8x8" in view_mode else 128
 
-    def format_matrix_df(mat):
-        sub = mat[:slice_n, :slice_n]
-        df = pd.DataFrame(
-            sub,
-            index=[f"B{i}" for i in range(slice_n)],
-            columns=[f"K{j}" for j in range(slice_n)]
-        )
-        if "Heksadesimal" in fmt_mode:
-            return df.style.format(lambda x: f"{x:02X}")
-        return df
+def format_matrix_df(mat):
+    sub = mat[:slice_n, :slice_n, ch_idx]  # <-- add ch_idx here
+    df = pd.DataFrame(
+        sub,
+        index=[f"B{i}" for i in range(slice_n)],
+        columns=[f"K{j}" for j in range(slice_n)]
+    )
+    if "Heksadesimal" in fmt_mode:
+        return df.style.format(lambda x: f"{x:02X}")
+    return df
 
     m_col1, m_col2, m_col3 = st.columns(3)
     with m_col1:
