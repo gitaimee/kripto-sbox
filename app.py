@@ -210,7 +210,7 @@ def aes_decrypt_block_fast(block, rk, inv_sbox):
                 s[4*c : 4*c+4] = inv_mix_columns_col(s[4*c : 4*c+4])
     return s
 
-def render_terminal(logs):
+def render_terminal(logs, title_dim):
     body_html = "\n".join(logs)
     return f"""
     <div class="terminal-wrapper">
@@ -220,7 +220,7 @@ def render_terminal(logs):
                 <span class="dot dot-yellow"></span>
                 <span class="dot dot-green"></span>
             </div>
-            <div class="terminal-title">aes128-cbc-process — 128x128x3 RGB</div>
+            <div class="terminal-title">aes128-cbc-process — {title_dim}</div>
             <div style="width:45px;"></div>
         </div>
         <div class="terminal-body">{body_html}</div>
@@ -233,9 +233,9 @@ def fmt_hex_preview(arr, n=8):
 # ------------------ TAMPILAN UTAMA ------------------
 st.markdown("""
 <div class="hero-box">
-    <div class="hero-badge">PROYEK KONSTRUKSI S-BOX DENGAN MACHINE LEARNING</div>
+    <div class="hero-badge">AES-128 CBC | S-Box Hasil Optimasi</div>
     <div class="hero-title">Enkripsi dan Dekripsi Citra Digital</div>
-    <p class="hero-subtitle">Uji coba enkripsi block-cipher mode CBC menggunakan S-Box 8-bit kustom pada citra berwarna RGB, lengkap dengan log proses dekripsi dan perbandingan matriks piksel.</p>
+    <p class="hero-subtitle">Uji coba enkripsi block-cipher mode CBC menggunakan S-Box 8-bit kustom pada citra grayscale maupun berwarna (RGB), lengkap dengan log proses dekripsi dan perbandingan matriks piksel.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -246,7 +246,7 @@ with ctrl_col1:
     uploaded = st.file_uploader(
         "Pilih Gambar (PNG, JPG, JPEG, TIF, TIFF)",
         type=["png", "jpg", "jpeg", "tif", "tiff"],
-        help="Gambar diproses dalam format berwarna RGB ukuran 128x128x3 agar sesuai dengan pemrosesan blok 128-bit."
+        help="Mode warna gambar (Grayscale 1-kanal atau RGB 3-kanal) dideteksi otomatis dan dinormalisasi ke ukuran 128x128."
     )
 
 with ctrl_col2:
@@ -263,7 +263,18 @@ key = [int(clean_hex[i:i+2], 16) for i in range(0, 32, 2)]
 if uploaded is None:
     st.info("Unggah gambar terlebih dahulu untuk menjalankan proses enkripsi, dekripsi, dan melihat perbandingan matriks pikselnya.")
 else:
-    img = Image.open(uploaded).convert("RGB").resize((128, 128))
+    raw_img = Image.open(uploaded)
+    is_grayscale = raw_img.mode in ("L", "1", "I", "F")
+
+    if is_grayscale:
+        img = raw_img.convert("L").resize((128, 128))
+        mode_label = "128x128 Grayscale (1 Kanal)"
+        short_dim = "128x128"
+    else:
+        img = raw_img.convert("RGB").resize((128, 128))
+        mode_label = "128x128x3 RGB (3 Kanal)"
+        short_dim = "128x128x3"
+
     pixels = np.array(img, dtype=np.uint8)
     flat = pixels.flatten()
     total_bytes = len(flat)
@@ -277,10 +288,10 @@ else:
     def push_log(tag_cls, tag_text, msg):
         ts = time.strftime("%H:%M:%S")
         logs.append(f'<span class="log-time">[{ts}]</span> <span class="{tag_cls}">[{tag_text}]</span> {msg}')
-        terminal_slot.markdown(render_terminal(logs), unsafe_allow_html=True)
+        terminal_slot.markdown(render_terminal(logs, short_dim), unsafe_allow_html=True)
 
     push_log("log-tag-info", "INIT", f"Sumber S-Box: <span class='log-dim'>{html.escape(sbox_source)}</span>")
-    push_log("log-tag-info", "CITRA", f"Ukuran dinormalisasi ke <b>128x128x3 RGB</b> ({total_bytes:,} byte / {total_blocks:,} blok).")
+    push_log("log-tag-info", "CITRA", f"Format terdeteksi: <b>{mode_label}</b> ({total_bytes:,} byte / {total_blocks:,} blok).")
     push_log("log-tag-info", "KUNCI", f"Key schedule AES-128 siap (11 round key) | Hex: <span class='log-hex'>{clean_hex.upper()}</span>")
 
     rk = key_expansion(key, SBOX_ML)
@@ -307,7 +318,7 @@ else:
     time.sleep(0.08)
 
     # Proses Dekripsi
-    push_log("log-tag-dec", "DEKRIPSI", "Menyusun tabel Invers S-Box (INV_SBOX_ML) untuk mengembalikan nilai kanal RGB...")
+    push_log("log-tag-dec", "DEKRIPSI", "Menyusun tabel Invers S-Box (INV_SBOX_ML) untuk mengembalikan nilai piksel...")
     push_log("log-tag-dec", "DEKRIPSI", "Menjalankan dekripsi AES-128 CBC (InvShiftRows -> InvSubBytes -> AddRoundKey -> InvMixColumns)...")
     t_dec_start = time.perf_counter()
     decrypted = np.zeros_like(cipher)
@@ -330,13 +341,13 @@ else:
     # Ringkasan Metrik
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.markdown(f'<div class="stat-card"><div class="stat-label">Ukuran & Blok</div><div class="stat-value">128x128x3 ({total_blocks:,} blok)</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><div class="stat-label">Ukuran & Blok</div><div class="stat-value">{short_dim} ({total_blocks:,} blok)</div></div>', unsafe_allow_html=True)
     with m2:
         st.markdown(f'<div class="stat-card"><div class="stat-label">Durasi Enkripsi</div><div class="stat-value">{t_enc_ms:.1f} ms</div></div>', unsafe_allow_html=True)
     with m3:
         st.markdown(f'<div class="stat-card"><div class="stat-label">Durasi Dekripsi</div><div class="stat-value">{t_dec_ms:.1f} ms</div></div>', unsafe_allow_html=True)
     with m4:
-        st.markdown(f'<div class="stat-card"><div class="stat-label">Selisih Sub-Piksel</div><div class="stat-value">{byte_diff} / {total_bytes:,}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-card"><div class="stat-label">Selisih Nilai</div><div class="stat-value">{byte_diff} / {total_bytes:,}</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -358,33 +369,50 @@ else:
 
     # Tabel Matriks Piksel
     st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("Matriks Nilai Piksel per Kanal RGB (0-255)")
+    st.subheader("Matriks Nilai Piksel (0-255)")
 
-    opt_col1, opt_col2, opt_col3 = st.columns(3)
-    with opt_col1:
-        channel_mode = st.radio(
-            "Kanal Warna:",
-            ["Red (R)", "Green (G)", "Blue (B)"],
-            horizontal=True
-        )
-    with opt_col2:
-        view_mode = st.radio(
-            "Ukuran Matriks:",
-            ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
-            horizontal=True
-        )
-    with opt_col3:
-        fmt_mode = st.radio(
-            "Format Angka:",
-            ["Desimal (0-255)", "Heksadesimal (00-FF)"],
-            horizontal=True
-        )
+    if is_grayscale:
+        opt_col1, opt_col2 = st.columns(2)
+        with opt_col1:
+            view_mode = st.radio(
+                "Ukuran Matriks:",
+                ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
+                horizontal=True
+            )
+        with opt_col2:
+            fmt_mode = st.radio(
+                "Format Angka:",
+                ["Desimal (0-255)", "Heksadesimal (00-FF)"],
+                horizontal=True
+            )
+        ch_suffix = ""
+    else:
+        opt_col1, opt_col2, opt_col3 = st.columns(3)
+        with opt_col1:
+            channel_mode = st.radio(
+                "Kanal Warna:",
+                ["Red (R)", "Green (G)", "Blue (B)"],
+                horizontal=True
+            )
+        with opt_col2:
+            view_mode = st.radio(
+                "Ukuran Matriks:",
+                ["Cuplikan 8x8 Piksel Pertama (Pojok Kiri Atas)", "Matriks Penuh (128x128)"],
+                horizontal=True
+            )
+        with opt_col3:
+            fmt_mode = st.radio(
+                "Format Angka:",
+                ["Desimal (0-255)", "Heksadesimal (00-FF)"],
+                horizontal=True
+            )
+        ch_idx = {"Red (R)": 0, "Green (G)": 1, "Blue (B)": 2}[channel_mode]
+        ch_suffix = f" ({channel_mode})"
 
-    ch_idx = {"Red (R)": 0, "Green (G)": 1, "Blue (B)": 2}[channel_mode]
     slice_n = 8 if "8x8" in view_mode else 128
 
     def format_matrix_df(mat):
-        sub = mat[:slice_n, :slice_n, ch_idx]
+        sub = mat[:slice_n, :slice_n] if is_grayscale else mat[:slice_n, :slice_n, ch_idx]
         df = pd.DataFrame(
             sub,
             index=[f"B{i}" for i in range(slice_n)],
@@ -396,11 +424,11 @@ else:
 
     m_col1, m_col2, m_col3 = st.columns(3)
     with m_col1:
-        st.markdown(f"**Matriks Citra Asli ({channel_mode})**")
+        st.markdown(f"**Matriks Citra Asli{ch_suffix}**")
         st.dataframe(format_matrix_df(pixels), use_container_width=True)
     with m_col2:
-        st.markdown(f"**Matriks Citra Terenkripsi ({channel_mode})**")
+        st.markdown(f"**Matriks Citra Terenkripsi{ch_suffix}**")
         st.dataframe(format_matrix_df(cipher_img), use_container_width=True)
     with m_col3:
-        st.markdown(f"**Matriks Citra Hasil Dekripsi ({channel_mode})**")
+        st.markdown(f"**Matriks Citra Hasil Dekripsi{ch_suffix}**")
         st.dataframe(format_matrix_df(decrypted_img), use_container_width=True)
