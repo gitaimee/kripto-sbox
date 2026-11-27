@@ -32,19 +32,6 @@ st.markdown("""
         margin-bottom: 1.5rem;
         color: #f8fafc;
     }
-    .hero-badge {
-        display: inline-block;
-        background: rgba(56, 189, 248, 0.15);
-        color: #38bdf8;
-        border: 1px solid rgba(56, 189, 248, 0.35);
-        font-size: 0.75rem;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        padding: 0.25rem 0.7rem;
-        border-radius: 999px;
-        margin-bottom: 0.65rem;
-        text-transform: uppercase;
-    }
     .hero-title {
         font-size: 1.85rem;
         font-weight: 700;
@@ -125,7 +112,7 @@ st.markdown("""
         font-weight: 600;
     }
     .stat-value {
-        font-size: 1.2rem;
+        font-size: 1.15rem;
         font-weight: 700;
         color: #0f172a;
         margin-top: 0.15rem;
@@ -134,51 +121,57 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------ MUAT FILE S-BOX ------------------
-BASE = "/content/drive/MyDrive/sbox_project (1)"
-if not os.path.exists(BASE):
-    BASE = "/content/drive/MyDrive/sbox_project"
-if not os.path.exists(BASE):
-    BASE = "./sbox_project"
+BASE_CANDIDATES = [
+    ".",
+    "./sbox_project",
+    "/content/drive/MyDrive/sbox_project (1)",
+    "/content/drive/MyDrive/sbox_project",
+]
 
-sbox_path = os.path.join(BASE, "sbox_ml.npy")
+sbox_path = None
+for folder in BASE_CANDIDATES:
+    candidate = os.path.join(folder, "sbox_ml.npy")
+    if os.path.exists(candidate):
+        sbox_path = candidate
+        break
 
-if os.path.exists(sbox_path):
+if sbox_path is not None:
     SBOX_ML = np.load(sbox_path).astype(np.uint8)
     sbox_source = f"sbox_ml.npy ({sbox_path})"
 else:
     SBOX_ML = np.arange(256, dtype=np.uint8)
-    sbox_source = "S-Box bawaan (0-255)"
+    sbox_source = "S-Box identitas fallback (sbox_ml.npy tidak ditemukan)"
 
 INV_SBOX_ML = np.argsort(SBOX_ML).astype(np.uint8)
 
-# ------------------ FUNGSI KRIPTOGRAFI AES-128 ------------------
-def gf_mul(a: int, b: int) -> int:
-    r = 0
-    for _ in range(8):
-        if b & 1:
-            r ^= a
-        a <<= 1
-        if a & 0x100:
-            a ^= 0x11B
-        b >>= 1
-    return r
+# ------------------ TABEL LOOKUP GF(2^8) & AES-128 CEPAT ------------------
+def _build_gf_tables():
+    def gf_mul(a: int, b: int) -> int:
+        r = 0
+        for _ in range(8):
+            if b & 1:
+                r ^= a
+            a <<= 1
+            if a & 0x100:
+                a ^= 0x11B
+            b >>= 1
+        return r
 
-def mix_columns_col(col):
-    c0 = gf_mul(2, col[0]) ^ gf_mul(3, col[1]) ^ col[2] ^ col[3]
-    c1 = col[0] ^ gf_mul(2, col[1]) ^ gf_mul(3, col[2]) ^ col[3]
-    c2 = col[0] ^ col[1] ^ gf_mul(2, col[2]) ^ gf_mul(3, col[3])
-    c3 = gf_mul(3, col[0]) ^ col[1] ^ col[2] ^ gf_mul(2, col[3])
-    return [c0, c1, c2, c3]
+    mul2 = np.array([gf_mul(2, x) for x in range(256)], dtype=np.uint8)
+    mul3 = np.array([gf_mul(3, x) for x in range(256)], dtype=np.uint8)
+    mul9 = np.array([gf_mul(9, x) for x in range(256)], dtype=np.uint8)
+    mul11 = np.array([gf_mul(11, x) for x in range(256)], dtype=np.uint8)
+    mul13 = np.array([gf_mul(13, x) for x in range(256)], dtype=np.uint8)
+    mul14 = np.array([gf_mul(14, x) for x in range(256)], dtype=np.uint8)
+    return mul2, mul3, mul9, mul11, mul13, mul14
 
-def inv_mix_columns_col(col):
-    c0 = gf_mul(14, col[0]) ^ gf_mul(11, col[1]) ^ gf_mul(13, col[2]) ^ gf_mul(9, col[3])
-    c1 = gf_mul(9, col[0]) ^ gf_mul(14, col[1]) ^ gf_mul(11, col[2]) ^ gf_mul(13, col[3])
-    c2 = gf_mul(13, col[0]) ^ gf_mul(9, col[1]) ^ gf_mul(14, col[2]) ^ gf_mul(11, col[3])
-    c3 = gf_mul(11, col[0]) ^ gf_mul(13, col[1]) ^ gf_mul(9, col[2]) ^ gf_mul(14, col[3])
-    return [c0, c1, c2, c3]
+MUL2, MUL3, MUL9, MUL11, MUL13, MUL14 = _build_gf_tables()
 
-def key_expansion(key, sbox):
-    w = [list(key[4*i : 4*i+4]) for i in range(4)]
+SHIFT_ROWS_IDX = np.array([0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11], dtype=np.intp)
+INV_SHIFT_ROWS_IDX = np.array([0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3], dtype=np.intp)
+
+def key_expansion(key_bytes, sbox):
+    w = [list(key_bytes[4 * i : 4 * i + 4]) for i in range(4)]
     rcon = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
     for i in range(4, 44):
         t = list(w[i - 1])
@@ -186,58 +179,131 @@ def key_expansion(key, sbox):
             t = t[1:] + t[:1]
             t = [int(sbox[b]) for b in t]
             t[0] ^= rcon[i // 4 - 1]
-        w.append([w[i-4][j] ^ t[j] for j in range(4)])
-    return [sum(w[4*r : 4*r+4], []) for r in range(11)]
+        w.append([w[i - 4][j] ^ t[j] for j in range(4)])
+    rk = [sum(w[4 * r : 4 * r + 4], []) for r in range(11)]
+    return np.array(rk, dtype=np.uint8)
 
-def aes_encrypt_block_fast(block, rk, sbox):
-    s = [b ^ k for b, k in zip(block, rk[0])]
+def aes_encrypt_blocks_vec(blocks_u8: np.ndarray, rk: np.ndarray, sbox: np.ndarray) -> np.ndarray:
+    """Enkripsi batch blok (N, 16) sekaligus menggunakan vektorisasi NumPy."""
+    s = np.bitwise_xor(blocks_u8, rk[0])
     for r in range(1, 11):
-        s = [int(sbox[b]) for b in s]
+        s = sbox[s]
+        s = s[:, SHIFT_ROWS_IDX]
+        if r < 10:
+            s_col = s.reshape(-1, 4, 4)
+            c0, c1, c2, c3 = s_col[:, :, 0], s_col[:, :, 1], s_col[:, :, 2], s_col[:, :, 3]
+            m0 = MUL2[c0] ^ MUL3[c1] ^ c2 ^ c3
+            m1 = c0 ^ MUL2[c1] ^ MUL3[c2] ^ c3
+            m2 = c0 ^ c1 ^ MUL2[c2] ^ MUL3[c3]
+            m3 = MUL3[c0] ^ c1 ^ c2 ^ MUL2[c3]
+            s = np.stack([m0, m1, m2, m3], axis=-1).reshape(-1, 16)
+        s = np.bitwise_xor(s, rk[r])
+    return s
+
+def aes_decrypt_blocks_vec(blocks_u8: np.ndarray, rk: np.ndarray, inv_sbox: np.ndarray) -> np.ndarray:
+    """Dekripsi batch blok (N, 16) sekaligus menggunakan vektorisasi NumPy."""
+    s = np.bitwise_xor(blocks_u8, rk[10])
+    for r in range(9, -1, -1):
+        s = s[:, INV_SHIFT_ROWS_IDX]
+        s = inv_sbox[s]
+        s = np.bitwise_xor(s, rk[r])
+        if r > 0:
+            s_col = s.reshape(-1, 4, 4)
+            c0, c1, c2, c3 = s_col[:, :, 0], s_col[:, :, 1], s_col[:, :, 2], s_col[:, :, 3]
+            m0 = MUL14[c0] ^ MUL11[c1] ^ MUL13[c2] ^ MUL9[c3]
+            m1 = MUL9[c0] ^ MUL14[c1] ^ MUL11[c2] ^ MUL13[c3]
+            m2 = MUL13[c0] ^ MUL9[c1] ^ MUL14[c2] ^ MUL11[c3]
+            m3 = MUL11[c0] ^ MUL13[c1] ^ MUL9[c2] ^ MUL14[c3]
+            s = np.stack([m0, m1, m2, m3], axis=-1).reshape(-1, 16)
+    return s
+
+def _derive_ivs(rk: np.ndarray, sbox: np.ndarray):
+    """Menurunkan IV1 (CBC maju) dan IV2 (CBC mundur) secara deterministik dari kunci."""
+    seeds = np.array([[0x00] * 16, [0xFF] * 16], dtype=np.uint8)
+    ivs = aes_encrypt_blocks_vec(seeds, rk, sbox)
+    return ivs[0], ivs[1]
+
+def _aes_encrypt_single_list(block_list, rk_list, sbox_list):
+    s = [b ^ k for b, k in zip(block_list, rk_list[0])]
+    for r in range(1, 11):
+        s = [sbox_list[b] for b in s]
         s = [s[0], s[5], s[10], s[15], s[4], s[9], s[14], s[3], s[8], s[13], s[2], s[7], s[12], s[1], s[6], s[11]]
         if r < 10:
             for c in range(4):
-                s[4*c : 4*c+4] = mix_columns_col(s[4*c : 4*c+4])
-        s = [b ^ k for b, k in zip(s, rk[r])]
+                c0, c1, c2, c3 = s[4 * c : 4 * c + 4]
+                s[4 * c] = MUL2[c0] ^ MUL3[c1] ^ c2 ^ c3
+                s[4 * c + 1] = c0 ^ MUL2[c1] ^ MUL3[c2] ^ c3
+                s[4 * c + 2] = c0 ^ c1 ^ MUL2[c2] ^ MUL3[c3]
+                s[4 * c + 3] = MUL3[c0] ^ c1 ^ c2 ^ MUL2[c3]
+        s = [b ^ k for b, k in zip(s, rk_list[r])]
     return s
 
-def aes_decrypt_block_fast(block, rk, inv_sbox):
-    s = [b ^ k for b, k in zip(block, rk[10])]
-    for r in range(9, -1, -1):
-        s = [s[0], s[13], s[10], s[7], s[4], s[1], s[14], s[11], s[8], s[5], s[2], s[15], s[12], s[9], s[6], s[3]]
-        s = [int(inv_sbox[b]) for b in s]
-        s = [b ^ k for b, k in zip(s, rk[r])]
-        if r > 0:
-            for c in range(4):
-                s[4*c : 4*c+4] = inv_mix_columns_col(s[4*c : 4*c+4])
-    return s
+def encrypt_image_cbc(img_arr: np.ndarray, key_tuple: tuple) -> np.ndarray:
+    """
+    Enkripsi AES-128 Mode CBC Dua Arah (CBC Maju IV1 + CBC Mundur IV2)
+    agar perubahan 1 piksel di posisi mana pun menyebar ke seluruh blok citra.
+    """
+    rk = key_expansion(key_tuple, SBOX_ML)
+    iv1, iv2 = _derive_ivs(rk, SBOX_ML)
 
-def encrypt_image_cbc(img_arr, key_list):
-    rk = key_expansion(key_list, SBOX_ML)
-    flat = img_arr.flatten()
-    cipher = np.zeros_like(flat)
-    prev = [0] * 16
-    for idx in range(0, len(flat), 16):
-        block = flat[idx : idx+16].tolist()
-        if len(block) < 16:
-            block += [0] * (16 - len(block))
-        block = [b ^ p for b, p in zip(block, prev)]
-        enc = aes_encrypt_block_fast(block, rk, SBOX_ML)
-        cipher[idx : idx+16] = enc[:len(flat)-idx]
+    flat = img_arr.reshape(-1)
+    pad_len = (-flat.size) % 16
+    if pad_len:
+        flat = np.pad(flat, (0, pad_len), mode="constant")
+
+    n_blocks = flat.size // 16
+    blocks = flat.reshape(n_blocks, 16).tolist()
+    rk_list = rk.tolist()
+    sbox_list = SBOX_ML.tolist()
+
+    # Pass 1: CBC Maju (Forward) dengan IV1
+    fwd = [None] * n_blocks
+    prev = iv1.tolist()
+    for i in range(n_blocks):
+        xored = [b ^ p for b, p in zip(blocks[i], prev)]
+        enc = _aes_encrypt_single_list(xored, rk_list, sbox_list)
+        fwd[i] = enc
         prev = enc
-    return cipher.reshape(img_arr.shape)
 
-def decrypt_image_cbc(cipher_arr, key_list):
-    rk = key_expansion(key_list, SBOX_ML)
-    flat_c = cipher_arr.flatten()
-    decrypted = np.zeros_like(flat_c)
-    prev = [0] * 16
-    for idx in range(0, len(flat_c), 16):
-        c_block = flat_c[idx : idx+16].tolist()
-        dec = aes_decrypt_block_fast(c_block, rk, INV_SBOX_ML)
-        dec = [d ^ p for d, p in zip(dec, prev)]
-        decrypted[idx : idx+16] = dec[:len(flat_c)-idx]
-        prev = c_block
-    return decrypted.reshape(cipher_arr.shape)
+    # Pass 2: CBC Mundur (Backward) dengan IV2
+    bwd = [None] * n_blocks
+    prev = iv2.tolist()
+    for i in range(n_blocks - 1, -1, -1):
+        xored = [b ^ p for b, p in zip(fwd[i], prev)]
+        enc = _aes_encrypt_single_list(xored, rk_list, sbox_list)
+        bwd[i] = enc
+        prev = enc
+
+    cipher_flat = np.array(bwd, dtype=np.uint8).reshape(-1)[:img_arr.size]
+    return cipher_flat.reshape(img_arr.shape)
+
+def decrypt_image_cbc(cipher_arr: np.ndarray, key_tuple: tuple) -> np.ndarray:
+    """
+    Dekripsi AES-128 Mode CBC Dua Arah (Balik CBC Mundur -> Balik CBC Maju)
+    menggunakan batch vektorisasi penuh sehingga sangat cepat.
+    """
+    rk = key_expansion(key_tuple, SBOX_ML)
+    iv1, iv2 = _derive_ivs(rk, SBOX_ML)
+
+    flat_c = cipher_arr.reshape(-1)
+    pad_len = (-flat_c.size) % 16
+    if pad_len:
+        flat_c = np.pad(flat_c, (0, pad_len), mode="constant")
+
+    c_blocks = flat_c.reshape(-1, 16)
+
+    # Langkah 1: Balik CBC Mundur (Backward) secara paralel
+    dec_bwd = aes_decrypt_blocks_vec(c_blocks, rk, INV_SBOX_ML)
+    next_c = np.vstack([c_blocks[1:], iv2.reshape(1, 16)])
+    fwd_blocks = np.bitwise_xor(dec_bwd, next_c)
+
+    # Langkah 2: Balik CBC Maju (Forward) secara paralel
+    dec_fwd = aes_decrypt_blocks_vec(fwd_blocks, rk, INV_SBOX_ML)
+    prev_f = np.vstack([iv1.reshape(1, 16), fwd_blocks[:-1]])
+    plain_blocks = np.bitwise_xor(dec_fwd, prev_f)
+
+    plain_flat = plain_blocks.reshape(-1)[:cipher_arr.size]
+    return plain_flat.reshape(cipher_arr.shape)
 
 # ------------------ FUNGSI UJI STATISTIK, DIFERENSIAL & HISTOGRAM ------------------
 def kanal(img):
@@ -254,8 +320,78 @@ def chi_square(a):
     return float(((h - e) ** 2 / e).sum())
 
 def npcr_uaci(c1, c2):
-    a, b = c1.astype(np.int16), c2.astype(np.int16)
-    return float((a != b).mean() * 100), float((np.abs(a - b) / 255).mean() * 100)
+    a, b = c1.astype(np.int32), c2.astype(np.int32)
+    npcr_val = float((a != b).mean() * 100.0)
+    uaci_val = float((np.abs(a - b) / 255.0).mean() * 100.0)
+    return npcr_val, uaci_val
+
+@st.cache_data(show_spinner=False)
+def run_full_crypto_and_tests(pixels: np.ndarray, key_tuple: tuple, sbox_snapshot: bytes):
+    """Menjalankan enkripsi, dekripsi, uji NPCR/UACI (5x), dan uji sensitivitas kunci dengan cache."""
+    # 1. Enkripsi Utama
+    t_enc_start = time.perf_counter()
+    cipher_img = encrypt_image_cbc(pixels, key_tuple)
+    t_enc_ms = (time.perf_counter() - t_enc_start) * 1000.0
+
+    # 2. Dekripsi Utama
+    t_dec_start = time.perf_counter()
+    decrypted_img = decrypt_image_cbc(cipher_img, key_tuple)
+    t_dec_ms = (time.perf_counter() - t_dec_start) * 1000.0
+
+    # 3. Uji Diferensial NPCR & UACI (5 kali acak +1 pada 1 piksel)
+    n_uji = 5
+    rng = np.random.default_rng(123)
+    diff_rows = []
+    for t in range(n_uji):
+        pos = tuple(int(rng.integers(0, s)) for s in pixels.shape)
+        img2 = pixels.copy()
+        img2[pos] = (int(img2[pos]) + 1) % 256
+        c2 = encrypt_image_cbc(img2, key_tuple)
+        for (k, a), (_, b) in zip(kanal(cipher_img), kanal(c2)):
+            npcr_val, uaci_val = npcr_uaci(a, b)
+            diff_rows.append({
+                "Uji": t + 1,
+                "Posisi": str(pos),
+                "Kanal": k,
+                "NPCR (%)": round(npcr_val, 4),
+                "UACI (%)": round(uaci_val, 4),
+                "Lolos NPCR": "Ya" if npcr_val > 99.5893 else "Tidak",
+                "Lolos UACI": "Ya" if (33.3730 <= uaci_val <= 33.5541) else "Tidak"
+            })
+    df_diff = pd.DataFrame(diff_rows)
+
+    df_diff_sum = (
+        df_diff.groupby("Kanal", sort=False)[["NPCR (%)", "UACI (%)"]]
+        .mean()
+        .round(4)
+        .reset_index()
+    )
+    df_diff_sum["Lolos NPCR (> 99,5893%)"] = df_diff_sum["NPCR (%)"].apply(
+        lambda x: "Ya" if x > 99.5893 else "Tidak"
+    )
+    df_diff_sum["Lolos UACI (33,3730-33,5541%)"] = df_diff_sum["UACI (%)"].apply(
+        lambda x: "Ya" if (33.3730 <= x <= 33.5541) else "Tidak"
+    )
+
+    # 4. Uji Sensitivitas Kunci (Flip 1-bit pada byte ke-0)
+    key_salah = (key_tuple[0] ^ 1,) + key_tuple[1:]
+    c_salah = encrypt_image_cbc(pixels, key_salah)
+    d_salah = decrypt_image_cbc(cipher_img, key_salah)
+    sama_key = bool(np.array_equal(d_salah, pixels))
+
+    key_rows = []
+    for (k, a), (_, b), (_, d) in zip(kanal(cipher_img), kanal(c_salah), kanal(d_salah)):
+        npcr_k, uaci_k = npcr_uaci(a, b)
+        key_rows.append({
+            "Kanal": k,
+            "NPCR Cipher (%)": round(npcr_k, 4),
+            "UACI Cipher (%)": round(uaci_k, 4),
+            "Dekripsi Kunci Salah = Asli": "Ya" if sama_key else "Tidak",
+            "Entropi Dekripsi Salah": round(entropy(d), 5)
+        })
+    df_key = pd.DataFrame(key_rows)
+
+    return cipher_img, decrypted_img, t_enc_ms, t_dec_ms, df_diff, df_diff_sum, df_key
 
 def plot_histogram(im, is_cipher=False):
     warna = {"R": "#ef4444", "G": "#22c55e", "B": "#3b82f6"}
@@ -288,7 +424,7 @@ def render_terminal(logs, title_dim):
                 <span class="dot dot-yellow"></span>
                 <span class="dot dot-green"></span>
             </div>
-            <div class="terminal-title">aes128-cbc-process — {title_dim}</div>
+            <div class="terminal-title">aes128-cbc-bidirectional — {title_dim}</div>
             <div style="width:45px;"></div>
         </div>
         <div class="terminal-body">{body_html}</div>
@@ -302,12 +438,12 @@ def fmt_hex_preview(arr, n=8):
 st.markdown("""
 <div class="hero-box">
     <div class="hero-title">Enkripsi dan Dekripsi Citra Digital</div>
-    <p class="hero-subtitle">Simulasi AES-128 mode CBC menggunakan S-Box 8-bit kustom beserta uji statistik, diferensial (NPCR/UACI), dan sensitivitas kunci.</p>
+    <p class="hero-subtitle">Simulasi AES-128 mode CBC dua arah (IV1 + IV2) menggunakan S-Box 8-bit kustom beserta uji statistik, diferensial (NPCR/UACI), dan sensitivitas kunci.</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ------------------ INPUT GAMBAR & KUNCI ------------------
-ctrl_col1, ctrl_col2 = st.columns([2.2, 1])
+# ------------------ INPUT GAMBAR, RESOLUSI & KUNCI ------------------
+ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2.0, 1.1, 1.2])
 
 with ctrl_col1:
     uploaded = st.file_uploader(
@@ -316,67 +452,73 @@ with ctrl_col1:
     )
 
 with ctrl_col2:
+    resize_opt = st.selectbox(
+        "Resolusi Pemrosesan",
+        ["Ukuran Asli (Sesuai Colab)", "256 x 256", "128 x 128"],
+        index=0
+    )
+
+with ctrl_col3:
     key_hex_input = st.text_input(
-        "Kunci Enkripsi",
+        "Kunci Enkripsi (Hex 128-bit)",
         value="2b28ab097eaef7cf15d2154f16a6883c",
         max_chars=32
     )
 
 clean_hex = "".join(c for c in key_hex_input if c in "0123456789abcdefABCDEF").ljust(32, "0")[:32]
-key = [int(clean_hex[i:i+2], 16) for i in range(0, 32, 2)]
+key = tuple(int(clean_hex[i:i+2], 16) for i in range(0, 32, 2))
 
 if uploaded is None:
-    st.info("Unggah gambar untuk memulai proses enkripsi, dekripsi, dan pengujian.")
+    st.info("Unggah gambar (misalnya mandrill_rgb.png / mandrill_gray.png) untuk memulai proses enkripsi, dekripsi, dan pengujian.")
 else:
     raw_img = Image.open(uploaded)
     is_grayscale = raw_img.mode in ("L", "1", "I", "F")
 
-    if is_grayscale:
-        img = raw_img.convert("L").resize((128, 128))
-        mode_label = "128x128 Grayscale (1 Kanal)"
-        short_dim = "128x128"
-    else:
-        img = raw_img.convert("RGB").resize((128, 128))
-        mode_label = "128x128x3 RGB (3 Kanal)"
-        short_dim = "128x128x3"
+    img_proc = raw_img.convert("L") if is_grayscale else raw_img.convert("RGB")
+    if resize_opt == "256 x 256":
+        img_proc = img_proc.resize((256, 256))
+    elif resize_opt == "128 x 128":
+        img_proc = img_proc.resize((128, 128))
 
-    pixels = np.array(img, dtype=np.uint8)
+    pixels = np.array(img_proc, dtype=np.uint8)
+    h_img, w_img = pixels.shape[:2]
+
+    if is_grayscale:
+        mode_label = f"{h_img}x{w_img} Grayscale (1 Kanal)"
+        short_dim = f"{h_img}x{w_img}"
+    else:
+        mode_label = f"{h_img}x{w_img}x3 RGB (3 Kanal)"
+        short_dim = f"{h_img}x{w_img}x3"
+
     total_bytes = pixels.size
-    total_blocks = total_bytes // 16
+    total_blocks = (total_bytes + 15) // 16
+
+    # Jalankan Kriptografi & Pengujian (Cached)
+    with st.spinner("Menjalankan enkripsi AES-128 CBC dua arah & pengujian lengkap..."):
+        cipher_img, decrypted_img, t_enc_ms, t_dec_ms, df_diff, df_diff_sum, df_key = run_full_crypto_and_tests(
+            pixels, key, SBOX_ML.tobytes()
+        )
+
+    byte_diff = int(np.sum(pixels != decrypted_img))
 
     # Kotak Terminal Proses
     st.subheader("Log Proses")
-    terminal_slot = st.empty()
     logs = []
+    ts_now = time.strftime("%H:%M:%S")
+    def add_log(tag_cls, tag_text, msg):
+        logs.append(f'<span class="log-time">[{ts_now}]</span> <span class="{tag_cls}">[{tag_text}]</span> {msg}')
 
-    def push_log(tag_cls, tag_text, msg):
-        ts = time.strftime("%H:%M:%S")
-        logs.append(f'<span class="log-time">[{ts}]</span> <span class="{tag_cls}">[{tag_text}]</span> {msg}')
-        terminal_slot.markdown(render_terminal(logs, short_dim), unsafe_allow_html=True)
-
-    push_log("log-tag-info", "INIT", f"Sumber S-Box: <span class='log-dim'>{html.escape(sbox_source)}</span>")
-    push_log("log-tag-info", "CITRA", f"Format: <b>{mode_label}</b> ({total_bytes:,} byte / {total_blocks:,} blok).")
-    push_log("log-tag-info", "KUNCI", f"Key schedule AES-128 siap | Hex: <span class='log-hex'>{clean_hex.upper()}</span>")
-
-    # Proses Enkripsi
-    push_log("log-tag-enc", "ENKRIPSI", "Menjalankan AES-128 CBC (SubBytes -> ShiftRows -> MixColumns -> AddRoundKey)...")
-    t_enc_start = time.perf_counter()
-    cipher_img = encrypt_image_cbc(pixels, key)
-    t_enc_ms = (time.perf_counter() - t_enc_start) * 1000
-
-    push_log("log-tag-enc", "ENKRIPSI", f"Blok #0 Asli      : <span class='log-hex'>{fmt_hex_preview(pixels)} ...</span>")
-    push_log("log-tag-enc", "ENKRIPSI", f"Blok #0 Terenkripsi: <span class='log-hex'>{fmt_hex_preview(cipher_img)} ...</span>")
-    push_log("log-tag-enc", "SELESAI ", f"Enkripsi {total_blocks:,} blok selesai dalam <b>{t_enc_ms:.1f} ms</b>.")
-
-    # Proses Dekripsi
-    push_log("log-tag-dec", "DEKRIPSI", "Menjalankan dekripsi AES-128 CBC menggunakan INV_SBOX_ML...")
-    t_dec_start = time.perf_counter()
-    decrypted_img = decrypt_image_cbc(cipher_img, key)
-    t_dec_ms = (time.perf_counter() - t_dec_start) * 1000
-    byte_diff = int(np.sum(pixels != decrypted_img))
-
-    push_log("log-tag-dec", "DEKRIPSI", f"Blok #0 Dekripsi   : <span class='log-hex'>{fmt_hex_preview(decrypted_img)} ...</span>")
-    push_log("log-tag-dec", "SELESAI ", f"Dekripsi {total_blocks:,} blok selesai dalam <b>{t_dec_ms:.1f} ms</b> | Selisih: <b>{byte_diff}</b>.")
+    add_log("log-tag-info", "INIT", f"Sumber S-Box: <span class='log-dim'>{html.escape(sbox_source)}</span>")
+    add_log("log-tag-info", "CITRA", f"Format: <b>{mode_label}</b> ({total_bytes:,} byte / {total_blocks:,} blok).")
+    add_log("log-tag-info", "KUNCI", f"Key schedule AES-128 siap | Hex: <span class='log-hex'>{clean_hex.upper()}</span>")
+    add_log("log-tag-enc", "ENKRIPSI", "Menjalankan AES-128 CBC Dua Arah (CBC Maju IV1 -> CBC Mundur IV2)...")
+    add_log("log-tag-enc", "ENKRIPSI", f"Blok #0 Asli      : <span class='log-hex'>{fmt_hex_preview(pixels)} ...</span>")
+    add_log("log-tag-enc", "ENKRIPSI", f"Blok #0 Terenkripsi: <span class='log-hex'>{fmt_hex_preview(cipher_img)} ...</span>")
+    add_log("log-tag-enc", "SELESAI ", f"Enkripsi {total_blocks:,} blok selesai dalam <b>{t_enc_ms:.1f} ms</b>.")
+    add_log("log-tag-dec", "DEKRIPSI", "Menjalankan dekripsi AES-128 CBC Dua Arah menggunakan INV_SBOX_ML...")
+    add_log("log-tag-dec", "DEKRIPSI", f"Blok #0 Dekripsi   : <span class='log-hex'>{fmt_hex_preview(decrypted_img)} ...</span>")
+    add_log("log-tag-dec", "SELESAI ", f"Dekripsi {total_blocks:,} blok selesai dalam <b>{t_dec_ms:.1f} ms</b> | Selisih: <b>{byte_diff}</b>.")
+    st.markdown(render_terminal(logs, short_dim), unsafe_allow_html=True)
 
     # Ringkasan Metrik
     m1, m2, m3, m4 = st.columns(4)
@@ -442,56 +584,9 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("Uji Diferensial (NPCR & UACI) dan Sensitivitas Kunci")
 
-    N_UJI = 5
-    rng = np.random.default_rng(123)
-    diff_rows = []
-    for t in range(N_UJI):
-        pos = tuple(int(rng.integers(0, s)) for s in pixels.shape)
-        img2 = pixels.copy()
-        img2[pos] = (int(img2[pos]) + 1) % 256
-        c2 = encrypt_image_cbc(img2, key)
-        for (k, a), (_, b) in zip(kanal(cipher_img), kanal(c2)):
-            npcr_val, uaci_val = npcr_uaci(a, b)
-            diff_rows.append({
-                "Uji": t + 1,
-                "Posisi": str(pos),
-                "Kanal": k,
-                "NPCR (%)": round(npcr_val, 4),
-                "UACI (%)": round(uaci_val, 4),
-                "Lolos NPCR": "Ya" if npcr_val > 99.5893 else "Tidak",
-                "Lolos UACI": "Ya" if (33.3730 <= uaci_val <= 33.5541) else "Tidak"
-            })
-    df_diff = pd.DataFrame(diff_rows)
-
-    df_diff_sum = (
-        df_diff.groupby("Kanal", sort=False)[["NPCR (%)", "UACI (%)"]]
-        .mean()
-        .round(4)
-        .reset_index()
-    )
-    df_diff_sum["Lolos NPCR (> 99,5893%)"] = df_diff_sum["NPCR (%)"].apply(lambda x: "Ya" if x > 99.5893 else "Tidak")
-    df_diff_sum["Lolos UACI (33,3730-33,5541%)"] = df_diff_sum["UACI (%)"].apply(lambda x: "Ya" if (33.3730 <= x <= 33.5541) else "Tidak")
-
-    key_salah = [key[0] ^ 1] + key[1:]
-    c_salah = encrypt_image_cbc(pixels, key_salah)
-    d_salah = decrypt_image_cbc(cipher_img, key_salah)
-    sama_key = bool(np.array_equal(d_salah, pixels))
-
-    key_rows = []
-    for (k, a), (_, b), (_, d) in zip(kanal(cipher_img), kanal(c_salah), kanal(d_salah)):
-        npcr_k, uaci_k = npcr_uaci(a, b)
-        key_rows.append({
-            "Kanal": k,
-            "NPCR Cipher (%)": round(npcr_k, 4),
-            "UACI Cipher (%)": round(uaci_k, 4),
-            "Dekripsi Kunci Salah = Asli": "Ya" if sama_key else "Tidak",
-            "Entropi Dekripsi Salah": round(entropy(d), 5)
-        })
-    df_key = pd.DataFrame(key_rows)
-
     tab_sum, tab_detail, tab_key = st.tabs([
         "Rata-rata NPCR & UACI",
-        f"Detail {N_UJI}x Uji Piksel (+1)",
+        "Detail 5x Uji Piksel (+1)",
         "Sensitivitas Kunci (Flip 1-Bit)"
     ])
     with tab_sum:
@@ -505,12 +600,13 @@ else:
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("Matriks Nilai Piksel (0-255)")
 
+    full_label = f"Matriks Penuh ({h_img}x{w_img})"
     if is_grayscale:
         opt_col1, opt_col2 = st.columns(2)
         with opt_col1:
             view_mode = st.radio(
                 "Ukuran Matriks:",
-                ["Cuplikan 8x8 Piksel Pertama", "Matriks Penuh (128x128)"],
+                ["Cuplikan 8x8 Piksel Pertama", full_label],
                 horizontal=True
             )
         with opt_col2:
@@ -531,7 +627,7 @@ else:
         with opt_col2:
             view_mode = st.radio(
                 "Ukuran Matriks:",
-                ["Cuplikan 8x8 Piksel Pertama", "Matriks Penuh (128x128)"],
+                ["Cuplikan 8x8 Piksel Pertama", full_label],
                 horizontal=True
             )
         with opt_col3:
@@ -543,14 +639,16 @@ else:
         ch_idx = {"Red (R)": 0, "Green (G)": 1, "Blue (B)": 2}[channel_mode]
         ch_suffix = f" ({channel_mode})"
 
-    slice_n = 8 if "8x8" in view_mode else 128
+    is_crop_8x8 = "8x8" in view_mode
+    slice_h = min(8, h_img) if is_crop_8x8 else h_img
+    slice_w = min(8, w_img) if is_crop_8x8 else w_img
 
     def format_matrix_df(mat):
-        sub = mat[:slice_n, :slice_n] if is_grayscale else mat[:slice_n, :slice_n, ch_idx]
+        sub = mat[:slice_h, :slice_w] if is_grayscale else mat[:slice_h, :slice_w, ch_idx]
         df = pd.DataFrame(
             sub,
-            index=[f"B{i}" for i in range(slice_n)],
-            columns=[f"K{j}" for j in range(slice_n)]
+            index=[f"B{i}" for i in range(slice_h)],
+            columns=[f"K{j}" for j in range(slice_w)]
         )
         if "Heksadesimal" in fmt_mode:
             return df.style.format(lambda x: f"{x:02X}")
