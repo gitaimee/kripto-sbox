@@ -233,7 +233,7 @@ def fmt_hex_preview(arr, n=8):
 # ------------------ TAMPILAN UTAMA ------------------
 st.markdown("""
 <div class="hero-box">
-    <div class="hero-badge">AES-128 CBC | S-Box Hasil Optimasi</div>
+    <div class="hero-badge">PROYEK KONSTRUKSI S-BOX DENGAN MACHINE LEARNING</div>
     <div class="hero-title">Enkripsi dan Dekripsi Citra Digital</div>
     <p class="hero-subtitle">Uji coba enkripsi block-cipher mode CBC menggunakan S-Box 8-bit kustom pada citra berwarna RGB, lengkap dengan log proses dekripsi dan perbandingan matriks piksel.</p>
 </div>
